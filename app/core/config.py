@@ -34,6 +34,10 @@ class Settings:
     DB_USER: str = _get_required_env("DB_USER")
     DB_PASSWORD: str = _get_required_env("DB_PASSWORD")
 
+    JWT_SECRET_KEY: str = _get_required_env("JWT_SECRET_KEY")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_EXPIRE_MINUTES: int = int(_get_required_env("JWT_EXPIRE_MINUTES"))
+
     @property
     def database_url(self) -> URL:
         """Build a safe SQLAlchemy PostgreSQL connection URL."""

@@ -5,3 +5,9 @@ alembic
 psycopg2-binary
 pydantic
 python-dotenv
+bcrypt
+pyjwt
+user-agents
+python-multipart
+pillow
+
