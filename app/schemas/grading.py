@@ -102,8 +102,19 @@ class GradeAnswerResponse(BaseModel):
     message: str
 
 
+class QuestionResultDetail(BaseModel):
+    """Per-question result breakdown for candidate."""
+
+    question_id: int
+    prompt: str
+    type: str
+    max_marks: Decimal
+    marks_awarded: Decimal | None = None
+    verdict: str = "wrong"  # "correct", "partial", "wrong"
+
+
 class StudentResultResponse(BaseModel):
-    """Student's published result scorecard."""
+    """Student's published result scorecard with question-level verdict and class stats."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -111,18 +122,57 @@ class StudentResultResponse(BaseModel):
     exam_title: str
     student_id: int
     attempt_id: int
-    total_score: Decimal
-    max_score: Decimal
+    score: Decimal
+    total_marks: Decimal
+    total_score: Decimal  # backwards compatibility
+    max_score: Decimal    # backwards compatibility
     score_display: str
     percentage: Decimal
     is_published: bool
     published_at: datetime | None = None
+    questions: list[QuestionResultDetail] = []
+    class_average: Decimal | None = None
+    class_highest: Decimal | None = None
+    class_lowest: Decimal | None = None
+
+
+class PublishResultsRequest(BaseModel):
+    """Request payload to publish or unpublish exam results."""
+
+    publish: bool = True
 
 
 class PublishResultsResponse(BaseModel):
-    """Result returned after publishing exam results."""
+    """Result returned after publishing/unpublishing exam results."""
 
     exam_id: int
     published_count: int
+    is_published: bool
     message: str
+
+
+class ExamStatsResponse(BaseModel):
+    """Class performance statistics and distribution for an exam."""
+
+    exam_id: int
+    exam_title: str
+    total_attempts: int
+    class_average: Decimal
+    highest_score: Decimal
+    lowest_score: Decimal
+    pass_count: int
+    fail_count: int
+    score_distribution: dict[str, int]
+
+
+class PublicVerificationResponse(BaseModel):
+    """Minimal, privacy-preserving certificate verification response."""
+
+    valid: bool
+    student_name: str | None = None
+    exam_title: str | None = None
+    score_display: str | None = None
+    date: str | None = None
+    message: str
+
 

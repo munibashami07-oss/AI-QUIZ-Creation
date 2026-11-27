@@ -466,67 +466,28 @@ def grade_single_answer(
 
 def publish_exam_results(db: Session, exam_id: int, examiner_id: int) -> PublishResultsResponse:
     """Examiner/Admin publishes graded results for all completed attempts in an exam."""
-    exam = db.get(Exam, exam_id)
-    if not exam:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found.")
-
-    now = datetime.now(timezone.utc)
-    results = db.scalars(select(Result).where(Result.exam_id == exam_id)).all()
-
-    count = 0
-    for res in results:
-        res.is_published = True
-        res.published_by = examiner_id
-        res.published_at = now
-        count += 1
-
-    db.commit()
-    return PublishResultsResponse(
-        exam_id=exam_id,
-        published_count=count,
-        message=f"Successfully published {count} result(s) for exam '{exam.title}'.",
-    )
+    from app.services.report_service import publish_or_unpublish_exam_results
+    return publish_or_unpublish_exam_results(db, exam_id=exam_id, examiner_id=examiner_id, publish=True)
 
 
 def get_student_exam_result(db: Session, student_id: int, exam_id: int) -> StudentResultResponse:
     """Student retrieves their published scorecard, shown as score / total_marks. Hidden until published."""
-    exam = db.get(Exam, exam_id)
-    if not exam:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found.")
+    from app.services.report_service import get_student_attempt_result
 
-    res = db.scalar(
-        select(Result).where(
-            Result.exam_id == exam_id,
-            Result.student_id == student_id,
+    attempt = db.scalar(
+        select(Attempt)
+        .where(
+            Attempt.exam_id == exam_id,
+            Attempt.student_id == student_id,
+            Attempt.is_sandbox == False,
         )
+        .order_by(Attempt.id.desc())
     )
-    if not res:
+    if not attempt:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No exam result found for this examination.",
+            detail="No examination attempt record found for this exam.",
         )
 
-    if not res.is_published:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Results for this examination have not been published yet.",
-        )
-
-    percentage = Decimal("0.00")
-    if res.max_score and res.max_score > 0:
-        percentage = ((res.total_score / res.max_score) * 100).quantize(Decimal("0.01"))
-
-    score_display = f"{res.total_score:.2f} / {res.max_score:.2f}"
-
-    return StudentResultResponse(
-        exam_id=exam.id,
-        exam_title=exam.title,
-        student_id=student_id,
-        attempt_id=res.attempt_id,
-        total_score=res.total_score,
-        max_score=res.max_score,
-        score_display=score_display,
-        percentage=percentage,
-        is_published=res.is_published,
-        published_at=res.published_at,
-    )
+    student = db.get(User, student_id)
+    return get_student_attempt_result(db, attempt_id=attempt.id, current_user=student)

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.routers import admin, auth, examiner, health, role_examples, student
+from app.routers import admin, auth, examiner, health, reports, role_examples, student
 from app.services.attempt_service import expire_overdue_attempts
 
 logger = logging.getLogger("uvicorn.error")
@@ -63,3 +63,4 @@ app.include_router(role_examples.router)
 app.include_router(admin.router)
 app.include_router(examiner.router)
 app.include_router(student.router)
+app.include_router(reports.router)

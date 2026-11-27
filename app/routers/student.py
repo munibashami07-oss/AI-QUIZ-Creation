@@ -27,7 +27,7 @@ from app.services.attempt_service import (
     submit_attempt,
 )
 from app.services.auth import require_role
-from app.services.grading_service import get_student_exam_result
+from app.services.report_service import get_student_attempt_result
 
 router = APIRouter(prefix="/student", tags=["Student Exam Portal"])
 
@@ -170,7 +170,22 @@ def get_exam_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("student")),
 ) -> StudentResultResponse:
-    """View final published scorecard and percentage for an examination."""
-    return get_student_exam_result(db, student_id=current_user.id, exam_id=exam_id)
+    """View final published scorecard, per-question marks with verdicts, and class statistics."""
+    from app.models.attempt import Attempt
+    attempt = db.scalar(
+        select(Attempt)
+        .where(
+            Attempt.exam_id == exam_id,
+            Attempt.student_id == current_user.id,
+            Attempt.is_sandbox == False,
+        )
+        .order_by(Attempt.id.desc())
+    )
+    if not attempt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No examination attempt record found for this exam.",
+        )
+    return get_student_attempt_result(db, attempt_id=attempt.id, current_user=current_user)
 
 

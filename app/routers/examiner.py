@@ -2,7 +2,7 @@
 Examiner & Admin router for Questions and Exams management.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -24,9 +24,11 @@ from app.schemas.exam import (
 )
 from app.schemas.grading import (
     AnswerReviewResponse,
+    ExamStatsResponse,
     GradeAnswerRequest,
     GradeAnswerResponse,
     IncidentResponse,
+    PublishResultsRequest,
     PublishResultsResponse,
 )
 from app.services.attendance import compute_exam_status
@@ -44,7 +46,11 @@ from app.services.exam_service import (
 from app.services.grading_service import (
     get_pending_reviews_for_exam,
     grade_single_answer,
-    publish_exam_results,
+)
+from app.services.report_service import (
+    export_exam_results_csv,
+    get_exam_class_stats,
+    publish_or_unpublish_exam_results,
 )
 
 router = APIRouter(prefix="/examiner", tags=["Examiner & Question Management"])
@@ -320,11 +326,54 @@ def grade_answer(
 @router.post("/exams/{exam_id}/publish-results", response_model=PublishResultsResponse)
 def publish_results(
     exam_id: int,
+    payload: PublishResultsRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("admin", "examiner")),
 ) -> PublishResultsResponse:
-    """Publish exam results so enrolled students can view their scorecards."""
-    return publish_exam_results(db, exam_id=exam_id, examiner_id=current_user.id)
+    """Publish or unpublish exam results.
+    Publishing is refused if any submitted attempt still has ungraded short answers.
+    """
+    publish_flag = payload.publish if payload else True
+    return publish_or_unpublish_exam_results(
+        db, exam_id=exam_id, examiner_id=current_user.id, publish=publish_flag
+    )
+
+
+@router.post("/exams/{exam_id}/unpublish-results", response_model=PublishResultsResponse)
+def unpublish_results(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "examiner")),
+) -> PublishResultsResponse:
+    """Unpublish exam results."""
+    return publish_or_unpublish_exam_results(
+        db, exam_id=exam_id, examiner_id=current_user.id, publish=False
+    )
+
+
+@router.get("/exams/{exam_id}/stats", response_model=ExamStatsResponse)
+def get_examiner_exam_stats(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin", "examiner")),
+) -> ExamStatsResponse:
+    """Class analytics using SQL aggregates (excluding sandbox and unsubmitted attempts)."""
+    return get_exam_class_stats(db, exam_id=exam_id)
+
+
+@router.get("/exams/{exam_id}/results.csv")
+def get_examiner_exam_results_csv(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin", "examiner")),
+) -> Response:
+    """Export exam results as RFC 4180 CSV with sanitized formula cells."""
+    csv_text = export_exam_results_csv(db, exam_id=exam_id)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="exam_{exam_id}_results.csv"'},
+    )
 
 
 # ---------------------------------------------------------------------------

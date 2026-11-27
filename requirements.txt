@@ -11,4 +11,7 @@ user-agents
 python-multipart
 pillow
 google-genai
+reportlab
+qrcode[pil]
+
 

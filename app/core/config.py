@@ -39,6 +39,7 @@ class Settings:
     JWT_EXPIRE_MINUTES: int = int(_get_required_env("JWT_EXPIRE_MINUTES"))
 
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
 
     @property
     def database_url(self) -> URL:
