@@ -3,7 +3,7 @@ Grading and AI evaluation service for auto-grading MCQs and AI suggestions for s
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import json
 import logging
 import re
@@ -29,54 +29,94 @@ logger = logging.getLogger("uvicorn.error")
 
 
 # ---------------------------------------------------------------------------
+# Marks and Verdict Conversion Rules
+# ---------------------------------------------------------------------------
+
+
+def compute_half_marks(marks: Decimal) -> Decimal:
+    """Calculate half of the question's marks for partially correct answers.
+    
+    Rounding rule comment:
+    Award exactly half of the question's marks (marks / 2).
+    If marks are odd (or yield a fraction beyond one decimal place), round half up
+    to one decimal place (e.g., 5 -> 2.5, 3 -> 1.5, 7 -> 3.5, 1 -> 0.5, 5.5 -> 2.8).
+    Stored with two decimal places.
+    """
+    half = (marks / Decimal("2")).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return half.quantize(Decimal("0.01"))
+
+
+def verdict_to_marks(verdict: str, max_marks: Decimal) -> Decimal:
+    """Converts one of the three allowed verdicts into marks:
+    - 'correct': full marks, exactly as the teacher assigned
+    - 'partial': exactly half of the question's marks (odd rounded half up to 1 decimal place)
+    - 'wrong' or blank: 0
+    """
+    v = str(verdict).strip().lower()
+    if v == "correct":
+        return max_marks.quantize(Decimal("0.01"))
+    elif v == "partial":
+        return compute_half_marks(max_marks)
+    else:
+        return Decimal("0.00")
+
+
+# ---------------------------------------------------------------------------
 # MCQ Auto-Grading Rules
 # ---------------------------------------------------------------------------
 
 
-def grade_single_mcq(student_choice: Any, correct_choice: Any, marks: Decimal) -> Decimal:
-    """Single-choice MCQ rule: Full marks if exact match, otherwise 0."""
+def grade_single_mcq(student_choice: Any, correct_choice: Any, marks: Decimal) -> tuple[Decimal, str]:
+    """Single-choice MCQ rule:
+    - Correct: award full marks, exactly as teacher assigned.
+    - Wrong or blank: award 0.
+    Returns: (awarded_marks, verdict) where verdict is 'correct' or 'wrong'.
+    """
     if not student_choice or not correct_choice:
-        return Decimal("0.00")
+        return Decimal("0.00"), "wrong"
     if str(student_choice).strip().upper() == str(correct_choice).strip().upper():
-        return marks
-    return Decimal("0.00")
+        return marks.quantize(Decimal("0.01")), "correct"
+    return Decimal("0.00"), "wrong"
 
 
-def grade_multi_select_mcq(student_choices: Any, correct_choices: Any, marks: Decimal) -> Decimal:
+def grade_multi_select_mcq(student_choices: Any, correct_choices: Any, marks: Decimal) -> tuple[Decimal, str]:
     """Multi-select MCQ Grading Rule:
     
     Rule:
-    - Let C = set of correct options.
-    - Let S = set of student's selected options.
-    - If student selected any incorrect option (S has options not in C):
-      Award 0 marks (penalizes guessing/selecting all options).
-    - If S is a subset of C with no incorrect options:
-      Partial marks are awarded proportionally: marks * (len(S) / len(C)).
-      If S == C, this yields 100% of the question marks.
+    - All correct options and no wrong ones = full marks ('correct').
+    - Some correct options chosen and no wrong ones = half marks ('partial').
+      (If marks are odd, rounded half up to one decimal place).
+    - Otherwise (any wrong option selected, or blank/no correct option) = 0 ('wrong').
+    
+    Documented per requirement:
+    'all correct options and no wrong ones = full marks; some correct options chosen
+    and no wrong ones = half marks; otherwise 0. Document this rule in a code comment.'
     """
     if not student_choices or not correct_choices:
-        return Decimal("0.00")
+        return Decimal("0.00"), "wrong"
 
     if not isinstance(student_choices, (list, set, tuple)):
         student_choices = [student_choices]
     if not isinstance(correct_choices, (list, set, tuple)):
         correct_choices = [correct_choices]
 
-    s_set = {str(x).strip().upper() for x in student_choices}
-    c_set = {str(x).strip().upper() for x in correct_choices}
+    s_set = {str(x).strip().upper() for x in student_choices if str(x).strip()}
+    c_set = {str(x).strip().upper() for x in correct_choices if str(x).strip()}
 
-    if not c_set:
-        return Decimal("0.00")
+    if not s_set or not c_set:
+        return Decimal("0.00"), "wrong"
 
-    # If student chose an option that is not correct -> 0 marks
-    incorrect_picks = s_set - c_set
-    if len(incorrect_picks) > 0:
-        return Decimal("0.00")
+    # Any incorrect option selected -> 0 marks ('wrong')
+    if s_set - c_set:
+        return Decimal("0.00"), "wrong"
 
-    # Correct selections
-    correct_picks = s_set & c_set
-    ratio = Decimal(len(correct_picks)) / Decimal(len(c_set))
-    return (marks * ratio).quantize(Decimal("0.01"))
+    # No incorrect options selected:
+    if s_set == c_set:
+        return marks.quantize(Decimal("0.01")), "correct"
+    elif s_set.issubset(c_set) and len(s_set) > 0:
+        return compute_half_marks(marks), "partial"
+    else:
+        return Decimal("0.00"), "wrong"
 
 
 # ---------------------------------------------------------------------------
@@ -84,25 +124,47 @@ def grade_multi_select_mcq(student_choices: Any, correct_choices: Any, marks: De
 # ---------------------------------------------------------------------------
 
 
-def evaluate_short_answer_fallback(student_answer: str | None, model_answer: str, max_marks: Decimal) -> tuple[Decimal, str]:
-    """Fallback keyword matching algorithm when Gemini API is unavailable or unconfigured."""
+def evaluate_short_answer_fallback(
+    student_answer: str | None,
+    model_answer: str,
+    max_marks: Decimal,
+) -> tuple[Decimal, str, str]:
+    """Fallback keyword matching algorithm against model answer using three verdicts:
+    - All key terms matched = 'correct' (full marks)
+    - Some key terms matched (at least one, but not all) = 'partial' (half marks)
+    - None matched or blank = 'wrong' (0 marks)
+    
+    Returns: (marks, verdict, reason)
+    """
     if not student_answer or not student_answer.strip():
-        return Decimal("0.00"), "No answer submitted."
+        return Decimal("0.00"), "wrong", "No answer submitted."
 
     s_words = set(re.findall(r"\w+", student_answer.lower()))
     m_words = set(re.findall(r"\w+", model_answer.lower()))
 
     # Ignore trivial stopwords
-    stopwords = {"a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with", "is", "are", "was", "were", "it", "that", "this", "by"}
+    stopwords = {
+        "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of",
+        "with", "is", "are", "was", "were", "it", "that", "this", "by", "from", "be"
+    }
     key_words = m_words - stopwords
 
     if not key_words:
-        return Decimal("0.00"), "Model answer has no keywords to match."
+        return Decimal("0.00"), "wrong", "Model answer has no key terms to match."
 
     matched = s_words & key_words
-    match_ratio = Decimal(len(matched)) / Decimal(len(key_words))
-    suggested = min(max_marks, (max_marks * match_ratio).quantize(Decimal("0.01")))
-    return suggested, f"Automated keyword match ({len(matched)} of {len(key_words)} key terms matched)."
+    if len(matched) == len(key_words):
+        verdict = "correct"
+        reason = f"Keyword fallback: all {len(key_words)} key terms matched."
+    elif len(matched) > 0:
+        verdict = "partial"
+        reason = f"Keyword fallback: partial match ({len(matched)} of {len(key_words)} key terms matched)."
+    else:
+        verdict = "wrong"
+        reason = "Keyword fallback: no key terms matched."
+
+    marks = verdict_to_marks(verdict, max_marks)
+    return marks, verdict, reason
 
 
 def evaluate_short_answer_with_ai(
@@ -110,12 +172,19 @@ def evaluate_short_answer_with_ai(
     model_answer: str,
     student_answer: str | None,
     max_marks: Decimal,
-) -> tuple[Decimal, str]:
-    """Evaluate short answer using Gemini API, gracefully falling back to keyword matching.
-    Never exposes or logs the API key.
+) -> tuple[Decimal, str, str]:
+    """Evaluate short answer using Gemini API returning strictly {"verdict": "correct" | "partial" | "wrong", "reason": "<one line>"}.
+    The server converts the verdict into marks:
+    - correct = full marks
+    - partial = marks / 2 (odd rounded half up to 1 decimal place)
+    - wrong = 0
+    This guarantees the AI can never award more than the teacher's marks.
+    Gracefully falls back to keyword matching if key is missing, API fails, or JSON can't be parsed.
+    
+    Returns: (suggested_marks, verdict, reason)
     """
     if not student_answer or not student_answer.strip():
-        return Decimal("0.00"), "No response provided by candidate."
+        return Decimal("0.00"), "wrong", "No answer submitted."
 
     api_key = settings.GEMINI_API_KEY
     if not api_key:
@@ -127,16 +196,17 @@ def evaluate_short_answer_with_ai(
 
         client = genai.Client(api_key=api_key)
         sys_instruction = (
-            "You are an academic examination grader. Compare the student's answer with the model answer "
-            "for the given question and maximum marks. Respond strictly in valid JSON format: "
-            '{"suggested_marks": <number>, "reason": "<one sentence explanation>"}. '
-            f"suggested_marks must be between 0 and {float(max_marks)}."
+            "You are an academic examination grader. Compare the student's answer with the model answer. "
+            "Do not output a numerical score. You must categorize the answer into exactly one of three verdicts: "
+            "'correct' (accurate, complete answer matching model answer expectations), "
+            "'partial' (partially correct or incomplete understanding), or "
+            "'wrong' (incorrect, irrelevant, or blank). "
+            'Respond strictly in valid JSON format: {"verdict": "correct" | "partial" | "wrong", "reason": "<one line>"}'
         )
 
         user_content = (
             f"Question: {prompt_text}\n"
             f"Model Answer: {model_answer}\n"
-            f"Maximum Marks: {max_marks}\n"
             f"Student Answer: {student_answer}"
         )
 
@@ -151,10 +221,13 @@ def evaluate_short_answer_with_ai(
         )
 
         parsed = json.loads(response.text)
-        s_marks = Decimal(str(parsed.get("suggested_marks", 0))).quantize(Decimal("0.01"))
-        s_marks = max(Decimal("0.00"), min(s_marks, max_marks))
-        reason = str(parsed.get("reason", "Graded by Gemini AI."))
-        return s_marks, reason
+        verdict = str(parsed.get("verdict", "")).strip().lower()
+        if verdict not in {"correct", "partial", "wrong"}:
+            raise ValueError(f"Invalid AI verdict: {verdict}")
+
+        reason = str(parsed.get("reason", f"AI evaluated answer as {verdict}."))
+        suggested_marks = verdict_to_marks(verdict, max_marks)
+        return suggested_marks, verdict, reason
     except Exception as e:
         logger.warning("Gemini AI evaluation failed or unparseable (%s). Using keyword fallback.", type(e).__name__)
         return evaluate_short_answer_fallback(student_answer, model_answer, max_marks)
@@ -203,11 +276,11 @@ def run_auto_grading_for_attempt(db: Session, attempt: Attempt) -> None:
             continue
 
         if q_type == QuestionType.SINGLE_MCQ.value:
-            awarded = grade_single_mcq(ans.selected_options, db_q.correct_answer, max_marks)
+            awarded, _ = grade_single_mcq(ans.selected_options, db_q.correct_answer, max_marks)
             ans.marks_awarded = awarded
             ans.status = "graded"
         elif q_type == QuestionType.MULTI_SELECT.value:
-            awarded = grade_multi_select_mcq(ans.selected_options, db_q.correct_answer, max_marks)
+            awarded, _ = grade_multi_select_mcq(ans.selected_options, db_q.correct_answer, max_marks)
             ans.marks_awarded = awarded
             ans.status = "graded"
         elif q_type == QuestionType.WRITTEN.value:
@@ -218,15 +291,16 @@ def run_auto_grading_for_attempt(db: Session, attempt: Attempt) -> None:
             else:
                 model_str = str(model_ans or "")
 
-            suggested, reason = evaluate_short_answer_with_ai(
+            suggested, verdict, reason = evaluate_short_answer_with_ai(
                 prompt_text=db_q.prompt,
                 model_answer=model_str,
                 student_answer=ans.written_response,
                 max_marks=max_marks,
             )
-            # Store in selected_options JSONB as metadata: {"suggested_marks": ..., "ai_reason": ...}
+            # Store in selected_options JSONB as metadata: {"suggested_marks": ..., "verdict": ..., "ai_reason": ...}
             meta = ans.selected_options if isinstance(ans.selected_options, dict) else {}
             meta["suggested_marks"] = str(suggested)
+            meta["verdict"] = verdict
             meta["ai_reason"] = reason
             ans.selected_options = meta
             ans.status = "needs_review"  # Requires examiner approval
@@ -303,6 +377,7 @@ def get_pending_reviews_for_exam(db: Session, exam_id: int) -> list[AnswerReview
         meta = ans.selected_options if isinstance(ans.selected_options, dict) else {}
         suggested_raw = meta.get("suggested_marks")
         suggested_dec = Decimal(str(suggested_raw)) if suggested_raw is not None else None
+        verdict = meta.get("verdict")
         ai_reason = meta.get("ai_reason")
 
         results.append(
@@ -319,6 +394,7 @@ def get_pending_reviews_for_exam(db: Session, exam_id: int) -> list[AnswerReview
                 max_marks=q.marks,
                 marks_awarded=ans.marks_awarded,
                 suggested_marks=suggested_dec,
+                verdict=verdict,
                 ai_reason=ai_reason,
                 status=ans.status,
                 graded_by=ans.graded_by,
@@ -335,7 +411,9 @@ def grade_single_answer(
     marks_awarded: Decimal,
     notes: str | None = None,
 ) -> GradeAnswerResponse:
-    """Examiner manually awards marks or approves AI recommendation for a written answer."""
+    """Examiner manually awards marks or approves AI recommendation for a written answer.
+    Guarantees the final mark must stay between 0 and the question's marks.
+    """
     ans = db.get(Answer, answer_id)
     if not ans:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer not found.")
@@ -344,10 +422,10 @@ def grade_single_answer(
     if not q:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found.")
 
-    if marks_awarded > q.marks:
+    if marks_awarded < Decimal("0.00") or marks_awarded > q.marks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Awarded marks ({marks_awarded}) cannot exceed maximum question marks ({q.marks}).",
+            detail=f"Awarded marks ({marks_awarded}) must be between 0 and maximum question marks ({q.marks}).",
         )
 
     now = datetime.now(timezone.utc)
@@ -365,6 +443,14 @@ def grade_single_answer(
 
     all_graded, total_score = check_and_update_total_score(db, ans.attempt_id)
 
+    # Show score as score / total_marks
+    score_display = None
+    if total_score is not None:
+        attempt = db.get(Attempt, ans.attempt_id)
+        exam = db.get(Exam, attempt.exam_id) if attempt else None
+        max_marks = exam.total_marks if exam else total_score
+        score_display = f"{total_score:.2f} / {max_marks:.2f}"
+
     return GradeAnswerResponse(
         answer_id=ans.id,
         marks_awarded=ans.marks_awarded,
@@ -373,6 +459,7 @@ def grade_single_answer(
         graded_at=now,
         all_answers_graded=all_graded,
         total_score=total_score,
+        score_display=score_display,
         message="Answer graded successfully.",
     )
 
@@ -402,7 +489,7 @@ def publish_exam_results(db: Session, exam_id: int, examiner_id: int) -> Publish
 
 
 def get_student_exam_result(db: Session, student_id: int, exam_id: int) -> StudentResultResponse:
-    """Student retrieves their published scorecard. Hidden until published."""
+    """Student retrieves their published scorecard, shown as score / total_marks. Hidden until published."""
     exam = db.get(Exam, exam_id)
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found.")
@@ -429,6 +516,8 @@ def get_student_exam_result(db: Session, student_id: int, exam_id: int) -> Stude
     if res.max_score and res.max_score > 0:
         percentage = ((res.total_score / res.max_score) * 100).quantize(Decimal("0.01"))
 
+    score_display = f"{res.total_score:.2f} / {res.max_score:.2f}"
+
     return StudentResultResponse(
         exam_id=exam.id,
         exam_title=exam.title,
@@ -436,8 +525,8 @@ def get_student_exam_result(db: Session, student_id: int, exam_id: int) -> Stude
         attempt_id=res.attempt_id,
         total_score=res.total_score,
         max_score=res.max_score,
+        score_display=score_display,
         percentage=percentage,
         is_published=res.is_published,
         published_at=res.published_at,
     )
-

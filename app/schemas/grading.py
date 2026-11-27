@@ -74,6 +74,7 @@ class AnswerReviewResponse(BaseModel):
     max_marks: Decimal
     marks_awarded: Decimal | None = None
     suggested_marks: Decimal | None = None
+    verdict: str | None = None
     ai_reason: str | None = None
     status: str
     graded_by: int | None = None
@@ -97,6 +98,7 @@ class GradeAnswerResponse(BaseModel):
     graded_at: datetime
     all_answers_graded: bool
     total_score: Decimal | None = None
+    score_display: str | None = None
     message: str
 
 
@@ -111,6 +113,7 @@ class StudentResultResponse(BaseModel):
     attempt_id: int
     total_score: Decimal
     max_score: Decimal
+    score_display: str
     percentage: Decimal
     is_published: bool
     published_at: datetime | None = None
