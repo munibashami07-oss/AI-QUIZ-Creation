@@ -16,7 +16,6 @@
  
 ## Table of Contents
  
-- [Why This Project](#why-this-project)
 - [What You Get](#what-you-get)
 - [How It Works](#how-it-works)
 - [Features by Role](#features-by-role)
@@ -26,28 +25,6 @@
 - [Innovation Challenges](#innovation-challenges)
 - [AI Features](#ai-features)
 - [Known Limitations](#known-limitations)
-- [Roadmap](#roadmap)
----
- 
-## Why This Project
- 
-### Ask yourself these questions:
- 
-- Does an exam break when a student refreshes the page or loses Wi-Fi?
-- Can a student gain extra time by changing their device clock?
-- Does proctoring mean storing hours of screen, face and voice recordings?
-- Does writing a 30-question exam take longer than taking it?
-- Can you tell *why* a submission happened: manual, timeout or violation?
-**If you answered yes to any of these, this project is built for you.**
- 
-The Secure Examination Management System covers the full exam lifecycle for three roles (Administrator, Examiner, Candidate): authoring, scheduling, attendance, a monitored attempt, grading, results and verifiable reports.
- 
-**Best for:** university quizzes, lab tests and class exams that need reliability and fairness without invasive surveillance.
- 
-**Not for:** high-stakes certification that legally requires video proctoring.
- 
-[↑ Back to top ↑](#table-of-contents)
- 
 ---
  
 ## What You Get
@@ -356,21 +333,5 @@ A candidate dispute form, an examiner response, and an audit log of every grade 
 - Students only see class average and highest marks as aggregates, and only after results are published
 - The student answer-key PDF is generated only after results are published
 - A local AI model will not run on free hosting; the keyword fallback keeps grading working there
-[↑ Back to top ↑](#table-of-contents)
- 
----
- 
-## Roadmap
- 
-**Planned:**
- 
-- Dispute workflow with examiner responses (challenge 5.4)
-- Richer per-question analytics and charts
-- Rate limiting and extended audit log views
-**Considering:**
- 
-- Additional question types
-- Email and notification integrations
-- Multi-language interface
 [↑ Back to top ↑](#table-of-contents)
  
