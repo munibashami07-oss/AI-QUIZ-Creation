@@ -1,0 +1,11 @@
+// ---- src/App.jsx: add imports ----
+import Users from './pages/admin/Users'
+import Logins from './pages/admin/Logins'
+
+// ---- replace the two admin Stub routes ----
+<Route path="/admin/users" element={<Users />} />
+<Route path="/admin/logins" element={<Logins />} />
+
+// ---- src/main.jsx: wrap the app (inside AuthProvider) ----
+import { ToastProvider } from './components/ui'
+<AuthProvider><ToastProvider><App /></ToastProvider></AuthProvider>

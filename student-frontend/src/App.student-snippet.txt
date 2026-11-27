@@ -1,0 +1,15 @@
+// ---- src/App.jsx: imports ----
+import Exams from './pages/candidate/Exams'
+import Entry from './pages/candidate/Entry'
+import Workspace from './pages/candidate/Workspace'
+
+// ---- replace the candidate routes with ----
+<Route element={<ProtectedRoute role="candidate" />}>
+  <Route element={<AppLayout />}>
+    <Route path="/candidate/exams" element={<Exams />} />
+    <Route path="/candidate/exams/:id" element={<Entry />} />
+    <Route path="/candidate/results" element={<Stub name="Results" />} />
+  </Route>
+  {/* full-screen workspace, no sidebar */}
+  <Route path="/candidate/attempt/:id" element={<Workspace />} />
+</Route>
