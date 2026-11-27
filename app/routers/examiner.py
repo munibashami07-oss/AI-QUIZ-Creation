@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.database import get_db
 from app.models.enums import QuestionType, UserRole
 from app.models.exam import Exam, ExamQuestion, Question
+from app.models.extras import Incident
 from app.models.user import Attendance, Enrollment, User
 from app.schemas.exam import (
     AttendanceMarkRequest,
@@ -21,6 +22,13 @@ from app.schemas.exam import (
     QuestionUpdateRequest,
     SingleEnrollRequest,
 )
+from app.schemas.grading import (
+    AnswerReviewResponse,
+    GradeAnswerRequest,
+    GradeAnswerResponse,
+    IncidentResponse,
+    PublishResultsResponse,
+)
 from app.services.attendance import compute_exam_status
 from app.services.auth import require_role
 from app.services.exam_service import (
@@ -32,6 +40,11 @@ from app.services.exam_service import (
     list_questions,
     update_exam,
     update_question,
+)
+from app.services.grading_service import (
+    get_pending_reviews_for_exam,
+    grade_single_answer,
+    publish_exam_results,
 )
 
 router = APIRouter(prefix="/examiner", tags=["Examiner & Question Management"])
@@ -270,3 +283,68 @@ def mark_attendance(
 
     db.commit()
     return {"message": f"Attendance marked as '{payload.status}' for student id {payload.student_id}."}
+
+
+# ---------------------------------------------------------------------------
+# Grading & AI Evaluation Review (Examiner/Admin)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/exams/{exam_id}/grading/pending", response_model=list[AnswerReviewResponse])
+def get_exam_pending_grading(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin", "examiner")),
+) -> list[AnswerReviewResponse]:
+    """List all written student answers requiring manual review or AI suggestion approval."""
+    return get_pending_reviews_for_exam(db, exam_id=exam_id)
+
+
+@router.post("/answers/{answer_id}/grade", response_model=GradeAnswerResponse)
+def grade_answer(
+    answer_id: int,
+    payload: GradeAnswerRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "examiner")),
+) -> GradeAnswerResponse:
+    """Manually assign/override marks for a written student answer."""
+    return grade_single_answer(
+        db=db,
+        answer_id=answer_id,
+        examiner_id=current_user.id,
+        marks_awarded=payload.marks_awarded,
+        notes=payload.notes,
+    )
+
+
+@router.post("/exams/{exam_id}/publish-results", response_model=PublishResultsResponse)
+def publish_results(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "examiner")),
+) -> PublishResultsResponse:
+    """Publish exam results so enrolled students can view their scorecards."""
+    return publish_exam_results(db, exam_id=exam_id, examiner_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# Incidents & Monitoring
+# ---------------------------------------------------------------------------
+
+
+@router.get("/attempts/{attempt_id}/incidents", response_model=list[IncidentResponse])
+def get_attempt_incidents(
+    attempt_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin", "examiner")),
+) -> list[Incident]:
+    """Retrieve security violation incidents recorded during a candidate's attempt."""
+    incidents = list(
+        db.scalars(
+            select(Incident)
+            .where(Incident.attempt_id == attempt_id)
+            .order_by(Incident.occurred_at.asc())
+        ).all()
+    )
+    return incidents
+

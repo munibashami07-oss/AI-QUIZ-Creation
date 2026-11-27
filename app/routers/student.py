@@ -17,14 +17,17 @@ from app.schemas.attempt import (
     SubmitResponse,
 )
 from app.schemas.exam import EligibilityResponse, StudentExamResponse
+from app.schemas.grading import StudentResultResponse, ViolationActionResponse, ViolationReportRequest
 from app.services.attendance import check_exam_eligibility, compute_exam_status
 from app.services.attempt_service import (
     autosave_answer,
     get_attempt_state,
+    record_student_violation,
     start_or_resume_attempt,
     submit_attempt,
 )
 from app.services.auth import require_role
+from app.services.grading_service import get_student_exam_result
 
 router = APIRouter(prefix="/student", tags=["Student Exam Portal"])
 
@@ -143,4 +146,31 @@ def finalize_attempt(
     """Submit attempt with row-level locking (SELECT FOR UPDATE) to prevent duplicates."""
     reason = payload.submit_reason if payload else "manual"
     return submit_attempt(db, student=current_user, attempt_id=attempt_id, submit_reason=reason)
+
+
+@router.post("/attempts/{attempt_id}/violations", response_model=ViolationActionResponse)
+def report_attempt_violation(
+    attempt_id: int,
+    payload: ViolationReportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("student")),
+) -> ViolationActionResponse:
+    """Report an in-exam client violation event. Automatically finalizes the attempt if limit reached."""
+    return record_student_violation(db, student=current_user, attempt_id=attempt_id, payload=payload)
+
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
+
+
+@router.get("/exams/{exam_id}/result", response_model=StudentResultResponse)
+def get_exam_result(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("student")),
+) -> StudentResultResponse:
+    """View final published scorecard and percentage for an examination."""
+    return get_student_exam_result(db, student_id=current_user.id, exam_id=exam_id)
+
 

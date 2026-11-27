@@ -10,4 +10,5 @@ pyjwt
 user-agents
 python-multipart
 pillow
+google-genai
 

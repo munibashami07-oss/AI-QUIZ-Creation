@@ -38,6 +38,8 @@ class Settings:
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRE_MINUTES: int = int(_get_required_env("JWT_EXPIRE_MINUTES"))
 
+    GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
+
     @property
     def database_url(self) -> URL:
         """Build a safe SQLAlchemy PostgreSQL connection URL."""

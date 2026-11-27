@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.attempt import Answer, Attempt
 from app.models.enums import ExamStatus, QuestionType
 from app.models.exam import Exam, ExamQuestion, Question
+from app.models.extras import Incident
 from app.models.user import User
 from app.schemas.attempt import (
     AnswerStateResponse,
@@ -25,6 +26,7 @@ from app.schemas.attempt import (
     FrozenQuestionSchema,
     SubmitResponse,
 )
+from app.schemas.grading import ViolationActionResponse, ViolationReportRequest
 from app.services.attendance import check_exam_eligibility
 
 
@@ -339,6 +341,16 @@ def submit_attempt(
     db.commit()
     db.refresh(attempt)
 
+    # Automatically trigger auto-grading of MCQs and AI suggestions for written answers
+    try:
+        from app.services.grading_service import run_auto_grading_for_attempt
+
+        run_auto_grading_for_attempt(db, attempt)
+    except Exception as e:
+        import logging
+
+        logging.getLogger("uvicorn.error").error("Auto-grading failed for attempt %d: %s", attempt.id, e)
+
     return SubmitResponse(
         attempt_id=attempt.id,
         is_submitted=True,
@@ -346,6 +358,79 @@ def submit_attempt(
         submit_reason=attempt.submit_reason,
         server_time=now,
         message="Attempt submitted successfully.",
+    )
+
+
+def record_student_violation(
+    db: Session,
+    student: User,
+    attempt_id: int,
+    payload: ViolationReportRequest,
+) -> ViolationActionResponse:
+    """Record an in-exam candidate security violation (tab switch, window blur, fullscreen exit, etc.).
+    If violation limit is reached, automatically submits the attempt.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 1. Fetch attempt and verify ownership
+    attempt = db.scalar(select(Attempt).where(Attempt.id == attempt_id).with_for_update())
+    if not attempt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attempt not found.")
+
+    if attempt.student_id != student.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this attempt.")
+
+    if attempt.submitted_at is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attempt is already submitted.")
+
+    if check_and_auto_expire(db, attempt, now):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attempt has already expired.")
+
+    # 2. Get exam violation limit
+    exam = db.get(Exam, attempt.exam_id)
+    violation_limit = exam.violation_limit if exam else 3
+
+    # 3. Log incident event
+    incident = Incident(
+        attempt_id=attempt.id,
+        event_type=payload.type,
+        details=payload.details,
+        occurred_at=now,
+    )
+    db.add(incident)
+
+    # 4. Increment violation count
+    attempt.violation_count += 1
+
+    # 5. Check if limit exceeded
+    if attempt.violation_count >= violation_limit:
+        attempt.submitted_at = now
+        attempt.submit_reason = "violation_limit"
+        db.commit()
+        db.refresh(attempt)
+
+        try:
+            from app.services.grading_service import run_auto_grading_for_attempt
+
+            run_auto_grading_for_attempt(db, attempt)
+        except Exception as e:
+            import logging
+
+            logging.getLogger("uvicorn.error").error("Auto-grading failed for attempt %d: %s", attempt.id, e)
+
+        return ViolationActionResponse(
+            action="auto_submitted",
+            violation_count=attempt.violation_count,
+            violation_limit=violation_limit,
+            message="Violation limit reached. Your exam attempt has been automatically submitted.",
+        )
+
+    db.commit()
+    return ViolationActionResponse(
+        action="warning",
+        violation_count=attempt.violation_count,
+        violation_limit=violation_limit,
+        message=f"Security violation recorded ({attempt.violation_count} of {violation_limit}). Please remain focused within the exam.",
     )
 
 
@@ -370,4 +455,13 @@ def expire_overdue_attempts(db: Session) -> int:
 
     if count > 0:
         db.commit()
+        from app.services.grading_service import run_auto_grading_for_attempt
+
+        for att in overdue_attempts:
+            try:
+                run_auto_grading_for_attempt(db, att)
+            except Exception as e:
+                import logging
+
+                logging.getLogger("uvicorn.error").error("Auto-grading failed for overdue attempt %d: %s", att.id, e)
     return count
