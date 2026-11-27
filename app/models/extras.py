@@ -39,18 +39,19 @@ class Incident(Base):
 
 
 class Announcement(Base):
-    """Broadcasts examiner announcements to candidates taking an exam."""
+    """Broadcasts examiner announcements to candidates taking an exam or globally."""
 
     __tablename__ = "announcements"
-    __table_args__ = {"comment": "Examiner announcements sent to candidates during an examination."}
+    __table_args__ = {"comment": "Examiner and global announcements sent to candidates."}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    exam_id: Mapped[int | None] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), nullable=True, index=True)
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, server_default=text("''"))
     message: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = created_at_col()
 

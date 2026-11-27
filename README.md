@@ -1,3 +1,4 @@
+HEAD
 # AI Quiz Creation: Secure Examination Management System
  
 **Create, run and review online exams, with AI-assisted authoring and privacy-friendly proctoring**
@@ -335,3 +336,206 @@ A candidate dispute form, an examiner response, and an audit log of every grade 
 - A local AI model will not run on free hosting; the keyword fallback keeps grading working there
 [↑ Back to top ↑](#table-of-contents)
  
+
+# Secure Examination Management System
+
+A FastAPI + PostgreSQL backend for running secure online examinations with role-based access, live proctoring, AI-assisted grading, and PDF result reports.
+
+---
+
+## Features
+
+- **Three roles**: Admin, Examiner, Student — every route enforces JWT auth and role checks.
+- **Question bank**: Single-MCQ, multi-select, and written (AI-evaluated via Gemini).
+- **Exam lifecycle**: Draft → Published → Ongoing → Completed with server-enforced deadlines.
+- **Live proctoring**: Tab-switch / fullscreen violations auto-submit at the limit; live monitor endpoint shows candidate status and last-seen.
+- **Auto-grading**: MCQs graded immediately on submit; written answers evaluated by Gemini 2.5 Flash (keyword fallback if key absent) and queued for examiner review.
+- **Results & reports**: PDF transcripts with QR codes, public verification URL, CSV export, class statistics.
+- **Extras**: Announcements (global or exam-scoped), user preferences (theme/language), scratchpad notes per attempt (owner-only), immutable audit log.
+- **Bulk import**: CSV upload for students with per-row validation and error reporting.
+
+---
+
+## Requirements
+
+- Python 3.11+
+- PostgreSQL 14+
+
+---
+
+## Installation
+
+```bash
+# 1. Clone and enter the project
+git clone <repo-url>
+cd secure-exam-backend
+
+# 2. Create and activate a virtual environment
+python -m venv .venv
+.venv\Scripts\activate        # Windows PowerShell
+# source .venv/bin/activate   # Linux / macOS
+
+# 3. Install dependencies
+pip install -r requirements.txt
+```
+
+---
+
+## Environment Setup
+
+```bash
+# Copy the example file and fill in your values
+copy .env.example .env
+```
+
+Open `.env` and set at minimum:
+
+| Variable | Description |
+|---|---|
+| `DB_HOST` | PostgreSQL host (e.g. `localhost`) |
+| `DB_PORT` | PostgreSQL port (default `5432`) |
+| `DB_NAME` | Database name (e.g. `secure_exam_db`) |
+| `DB_USER` | PostgreSQL username |
+| `DB_PASSWORD` | PostgreSQL password |
+| `JWT_SECRET_KEY` | Long random secret (e.g. 64 hex chars) |
+| `JWT_EXPIRE_MINUTES` | Token lifetime in minutes (e.g. `60`) |
+| `GEMINI_API_KEY` | *(Optional)* Google Gemini key for AI grading |
+| `PUBLIC_BASE_URL` | Base URL for QR code links (e.g. `http://127.0.0.1:8000`) |
+
+---
+
+## Database Setup
+
+```bash
+# Create the database in PostgreSQL first, then run migrations:
+alembic upgrade head
+```
+
+Migrations apply in order: users table → all exam/attempt/extras tables → login session device columns → registration_status → announcement title column.
+
+---
+
+## Seed Demo Data
+
+```bash
+python seed.py
+```
+
+This truncates all tables and inserts:
+- 1 admin, 2 examiners, 15 students
+- 30 questions across 5 categories
+- 4 exams (completed, ongoing, published, draft)
+- 10 finished attempts with graded results (published)
+
+---
+
+## Running the Server
+
+```bash
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+API docs: http://127.0.0.1:8000/docs
+
+---
+
+## Demo Logins
+
+| Role | Email | Password | Roll Number |
+|---|---|---|---|
+| Admin | `admin@exam.local` | `Admin@123` | — |
+| Examiner 1 | `examiner1@exam.local` | `Examiner@123` | — |
+| Examiner 2 | `examiner2@exam.local` | `Examiner@123` | — |
+| Student 1 | `student1@exam.local` | `Student@123` | FA23-BCS-001 |
+| Student 2 | `student2@exam.local` | `Student@123` | FA23-BCS-002 |
+| *(Students 1–15)* | `studentN@exam.local` | `Student@123` | FA23-BCS-00N |
+
+Students can also log in with their roll number instead of email.
+
+---
+
+## Key API Endpoints
+
+### Auth
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/auth/login` | Login (email or roll_number + password) |
+| `GET` | `/auth/me` | Current user profile |
+| `POST` | `/auth/heartbeat` | Keep session alive |
+| `POST` | `/auth/logout` | Revoke session |
+| `POST` | `/auth/register` | Student self-registration (multipart + photo) |
+
+### Admin
+| Method | Path | Description |
+|---|---|---|
+| `GET/POST` | `/admin/users` | List / create users |
+| `PATCH/DELETE` | `/admin/users/{id}` | Update / delete user |
+| `POST` | `/admin/users/import` | Bulk CSV import |
+| `GET` | `/admin/registrations/pending` | Pending student registrations |
+| `POST` | `/admin/registrations/{id}/approve` | Approve student |
+| `GET` | `/admin/audit` | Audit log (filterable) |
+| `GET` | `/admin/logins/current` | Currently active sessions |
+
+### Examiner
+| Method | Path | Description |
+|---|---|---|
+| `POST/GET` | `/examiner/questions` | Create / list questions |
+| `POST/GET` | `/examiner/exams` | Create / list exams |
+| `POST` | `/examiner/exams/{id}/enroll-bulk` | Bulk enroll by roll numbers |
+| `POST` | `/examiner/exams/{id}/attendance` | Mark attendance |
+| `GET` | `/examiner/exams/{id}/grading/pending` | Written answers needing review |
+| `POST` | `/examiner/answers/{id}/grade` | Grade / approve written answer |
+| `POST` | `/examiner/exams/{id}/publish-results` | Publish results |
+| `GET` | `/examiner/exams/{id}/stats` | Class statistics |
+| `GET` | `/examiner/exams/{id}/results.csv` | CSV export |
+
+### Student
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/student/exams` | My enrolled exams |
+| `POST` | `/student/exams/{id}/start` | Start or resume attempt |
+| `PUT` | `/student/attempts/{id}/answers/{qid}` | Autosave answer |
+| `POST` | `/student/attempts/{id}/submit` | Submit attempt |
+| `GET` | `/student/exams/{id}/result` | View published result |
+
+### Extras
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/exams/{id}/monitor` | Live proctor monitor |
+| `POST/GET` | `/announcements` | Create / list announcements |
+| `GET/PUT` | `/preferences` | User preferences |
+| `GET/PUT` | `/attempts/{id}/scratchpad` | Scratchpad notes (owner only) |
+| `GET` | `/results/{id}/pdf` | PDF result download |
+| `GET` | `/verify/{verification_id}` | Public certificate verification |
+
+---
+
+## Security Notes
+
+- Correct answers are **never** included in `frozen_snapshot` or any student-facing response.
+- Server clock enforces all exam deadlines; client time is ignored.
+- `SELECT FOR UPDATE` prevents duplicate submissions under concurrent requests.
+- A PostgreSQL trigger (`trg_answers_check_marks`) enforces `marks_awarded ≤ question marks` at the DB level.
+- All secrets are loaded from `.env` via `python-dotenv`; they never appear in code or responses.
+- Student results are hidden until explicitly published by an examiner/admin.
+
+---
+
+## Project Structure
+
+```
+secure-exam-backend/
+├── app/
+│   ├── core/           # Settings, database engine, session factory
+│   ├── models/         # SQLAlchemy 2.0 ORM models
+│   ├── routers/        # FastAPI route handlers
+│   ├── schemas/        # Pydantic request/response models
+│   ├── services/       # Business logic (auth, attempt engine, grading, reports, …)
+│   └── main.py         # FastAPI app entry point
+├── alembic/            # Database migration scripts
+├── seed.py             # Demo data seeder
+├── requirements.txt
+├── .env.example
+└── README.md
+```
+ 46c9ce7 (Add backend, Neon database setup and migrations)

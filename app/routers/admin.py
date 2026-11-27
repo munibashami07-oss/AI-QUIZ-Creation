@@ -4,13 +4,14 @@ Admin-only router for login session views and user management CRUD.
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models import LoginSession, User, UserRole
 from app.schemas.auth import LoginSessionWithUserResponse
+from app.schemas.extras import AuditLogListResponse, BulkImportResponse
 from app.schemas.user import (
     PictureUploadResponse,
     UserCreateRequest,
@@ -18,7 +19,9 @@ from app.schemas.user import (
     UserResponse,
     UserUpdateRequest,
 )
+from app.services.audit_service import list_audit_logs
 from app.services.auth import get_current_user, require_role
+from app.services.extras_service import bulk_import_students
 from app.services.user_service import (
     ALLOWED_CONTENT_TYPES,
     MAX_PICTURE_BYTES,
@@ -320,4 +323,46 @@ def reject_student_registration(
 ) -> User:
     """Reject a student registration (sets is_active=False, registration_status='rejected', writes audit log)."""
     return reject_registration(db, admin_id=admin.id, user_id=user_id, reason=reason)
+
+
+# ---------------------------------------------------------------------------
+# Bulk Student Import & Audit Trail
+# ---------------------------------------------------------------------------
+
+
+@router.post("/users/import", response_model=BulkImportResponse)
+async def import_students_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+) -> BulkImportResponse:
+    """Bulk import students via CSV (name, email, roll number, phone).
+    Validates every row and reports per-row errors. Valid rows are imported.
+    """
+    content = await file.read()
+    csv_text = content.decode("utf-8-sig", errors="replace")
+    return bulk_import_students(db=db, admin_id=admin.id, csv_content=csv_text)
+
+
+@router.get("/audit", response_model=AuditLogListResponse)
+def get_audit_trail(
+    action: str | None = None,
+    entity_type: str | None = None,
+    actor_id: int | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role("admin")),
+) -> AuditLogListResponse:
+    """Retrieve platform audit logs with optional filters (admin only)."""
+    total, logs = list_audit_logs(
+        db=db,
+        action=action,
+        entity_type=entity_type,
+        actor_id=actor_id,
+        skip=skip,
+        limit=limit,
+    )
+    return AuditLogListResponse(total=total, entries=logs)
+
 

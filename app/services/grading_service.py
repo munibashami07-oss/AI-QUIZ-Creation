@@ -24,6 +24,7 @@ from app.schemas.grading import (
     PublishResultsResponse,
     StudentResultResponse,
 )
+from app.services.audit_service import log_audit_event
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -439,6 +440,20 @@ def grade_single_answer(
         meta["examiner_notes"] = notes
         ans.selected_options = meta
 
+    db.commit()
+
+    log_audit_event(
+        db,
+        action="answer_graded",
+        entity_type="answer",
+        actor_id=examiner_id,
+        entity_id=ans.id,
+        metadata={
+            "attempt_id": ans.attempt_id,
+            "question_id": ans.question_id,
+            "marks_awarded": str(marks_awarded),
+        },
+    )
     db.commit()
 
     all_graded, total_score = check_and_update_total_score(db, ans.attempt_id)

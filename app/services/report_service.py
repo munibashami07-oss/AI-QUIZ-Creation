@@ -119,7 +119,18 @@ def publish_or_unpublish_exam_results(
 
     db.commit()
 
+    from app.services.audit_service import log_audit_event
     action_str = "published" if publish else "unpublished"
+    log_audit_event(
+        db,
+        action=f"results_{action_str}",
+        entity_type="exam",
+        actor_id=examiner_id,
+        entity_id=exam_id,
+        metadata={"published": publish, "result_count": count},
+    )
+    db.commit()
+
     return PublishResultsResponse(
         exam_id=exam_id,
         published_count=count,

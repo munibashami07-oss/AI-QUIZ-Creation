@@ -619,12 +619,15 @@ def seed() -> None:
         snapshot_questions = [
             {
                 "question_id": q.id,
+                "order_index": idx,
                 "type": q.type.value,
+                "category": q.category,
+                "difficulty": q.difficulty,
                 "prompt": q.prompt,
                 "options": q.options,
                 "marks": str(q.marks),
             }
-            for q in completed_questions
+            for idx, q in enumerate(completed_questions, start=1)
         ]
 
         for idx, ratio in enumerate(performance_profiles):
@@ -694,7 +697,7 @@ def seed() -> None:
                         question_id=q.id,
                         selected_options=selected,
                         written_response=written,
-                        status=ans_status,
+                        status="graded" if ans_status != "unanswered" else "unanswered",
                         marks_awarded=awarded,
                         graded_by=examiner1.id,
                         graded_at=now - timedelta(days=1),

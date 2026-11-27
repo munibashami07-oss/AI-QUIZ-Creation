@@ -22,6 +22,7 @@ from app.schemas.exam import (
     StudentExamResponse,
 )
 from app.services.attendance import compute_exam_status
+from app.services.audit_service import log_audit_event
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +180,17 @@ def create_exam(db: Session, creator_id: int, payload: ExamCreateRequest) -> Exa
 
     db.commit()
     db.refresh(exam)
+
+    log_audit_event(
+        db,
+        action="exam_created",
+        entity_type="exam",
+        actor_id=creator_id,
+        entity_id=exam.id,
+        metadata={"title": exam.title, "mode": exam.mode},
+    )
+    db.commit()
+
     return exam_to_response(exam)
 
 
@@ -254,6 +266,17 @@ def update_exam(db: Session, exam_id: int, user: User, payload: ExamUpdateReques
 
     db.commit()
     db.refresh(exam)
+
+    log_audit_event(
+        db,
+        action="exam_updated",
+        entity_type="exam",
+        actor_id=user.id,
+        entity_id=exam.id,
+        metadata={"title": exam.title},
+    )
+    db.commit()
+
     return exam_to_response(exam)
 
 
@@ -263,5 +286,14 @@ def delete_exam(db: Session, exam_id: int, user: User) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found.")
     if user.role != UserRole.ADMIN and exam.created_by != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own examinations.")
+    log_audit_event(
+        db,
+        action="exam_deleted",
+        entity_type="exam",
+        actor_id=user.id,
+        entity_id=exam_id,
+        metadata={"title": exam.title},
+    )
+    db.commit()
     db.delete(exam)
     db.commit()

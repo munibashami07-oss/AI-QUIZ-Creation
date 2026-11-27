@@ -36,7 +36,7 @@ def write_audit_log(
         AuditLog(
             actor_id=actor_id,
             action=action,
-            entity_type="user",
+            entity_type=entity_type,
             entity_id=str(entity_id),
             metadata_json=metadata,
         )

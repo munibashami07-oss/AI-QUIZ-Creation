@@ -112,6 +112,17 @@ def authenticate_user(
     access_token, expires_at = create_access_token(user, session.id, token_jti)
     # Update expires_at to match the token exactly
     session.expires_at = expires_at
+
+    from app.services.audit_service import log_audit_event
+    log_audit_event(
+        db,
+        action="login",
+        entity_type="user",
+        actor_id=user.id,
+        entity_id=user.id,
+        metadata={"ip": ip_address, "device": ua_info["device"], "os": ua_info["os"], "browser": ua_info["browser"]},
+    )
+
     db.commit()
 
     return LoginResponse(
