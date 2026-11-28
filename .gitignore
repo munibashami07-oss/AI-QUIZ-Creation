@@ -1,12 +1,28 @@
-# Python virtual environment and cache files
+# Python virtual environment and cache
 venv/
 .venv/
 __pycache__/
 *.py[cod]
+*.pyo
+.pytest_cache/
 
-# Environment variables (never commit real DB credentials)
+# Environment variables — never commit real credentials
 .env
+.env.local
 
-# IDE files
+# Uploaded profile pictures (served at /uploads/, not version-controlled)
+uploads/*
+!uploads/.gitkeep
+
+# Neon CLI binary (downloaded on demand)
+neon.exe
+neon
+
+# IDE / OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+
+# Alembic offline SQL output
+*.sql

@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
@@ -49,7 +51,28 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
+app = FastAPI(
+    title=settings.APP_NAME,
+    description="Secure Examination Management System — API docs",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS — allow all origins so the frontend and Swagger UI work from any host.
+# Tighten this list (replace "*") once you have a fixed frontend domain.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    """Redirect bare root URL to the interactive API docs."""
+    return RedirectResponse(url="/docs")
 
 # Serve uploaded profile pictures at /uploads/
 uploads_dir = Path(__file__).resolve().parent.parent / "uploads"

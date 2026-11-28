@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: secure-exam-backend
+    runtime: python
+    region: ohio          # closest to Neon aws-us-east-2
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: DATABASE_URL
+        sync: false       # set manually in Render dashboard — contains credentials
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "60"
+      - key: APP_NAME
+        value: Secure Examination Management System
+      - key: ENVIRONMENT
+        value: production
+      - key: PUBLIC_BASE_URL
+        sync: false       # set to your Render service URL after first deploy
+      - key: GEMINI_API_KEY
+        sync: false       # optional — AI grading; leave blank to use keyword fallback
+      - key: PYTHON_VERSION
+        value: "3.11.0"
